@@ -3,16 +3,32 @@ import ssl
 
 class URL:
     def __init__(self, url):
-        self.scheme, url = url.split("://", 1)
-        assert self.scheme in ["http", "https"]
+        self.scheme, url = url.split(":", 1)
+        assert self.scheme in ["http", "https", "file", "data"], "URL scheme unsupported"
+
         if self.scheme == "http":
             self.port = 80
         elif self.scheme == "https":
             self.port = 443
+
+        if self.scheme == "data":
+            url, self.data = url.split(",", 1)
+            self.base64 = url.endswith(";base64")
+            assert not self.base64
+            self.mediatype = url.removesuffix(";base64")
+            assert self.mediatype == "text/html"
+            return
+
+        assert url.startswith("//"), "Expected host/authority in URL"
+        url = url.removeprefix("//")
+
         if "/" not in url:
             url += "/"
         self.host, url = url.split("/", 1)
         self.path = "/" + url
+        if self.scheme == "file":
+            assert self.host == "", "Only local files are supported"
+
         if ":" in self.host:
             self.host, port = self.host.split(":", 1)
             self.port = int(port)
@@ -24,6 +40,14 @@ class URL:
             "User-Agent": "tinybrowser",
         }
     ):
+        if self.scheme == "data":
+            return self.data
+
+        if self.scheme == "file":
+            with open(self.path, "r") as f:
+                content = f.read()
+            return content
+
         s = socket.socket(
                 family=socket.AF_INET,
                 type=socket.SOCK_STREAM,
@@ -74,4 +98,7 @@ def load(url):
 
 if __name__ == "__main__":
     import sys
-    load(URL(sys.argv[1]))
+    if len(sys.argv) == 2:
+        load(URL(sys.argv[1]))
+    else:
+        load(URL("file:///Users/ryan/code/browser/test.html"))
