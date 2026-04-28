@@ -2,14 +2,16 @@ import socket
 import ssl
 
 class URL:
+    sockets = {}
+
     def __init__(self, url):
-        self.scheme, url = url.split(":", 1)
-        assert self.scheme in ["http", "https", "file", "data", "view-source"], "URL scheme unsupported"
-        if self.scheme == "view-source":
+        if url.startswith("view-source:"):
             self.view_source = True
-            self.scheme, url = url.split(":", 1)
+            url = url.removeprefix("view-source:")
         else:
             self.view_source = False
+        self.scheme, url = url.split(":", 1)
+        assert self.scheme in ["http", "https", "file", "data"], "URL scheme unsupported"
 
         if self.scheme == "http":
             self.port = 80
@@ -38,28 +40,31 @@ class URL:
             self.host, port = self.host.split(":", 1)
             self.port = int(port)
 
-    def request(
-        self,
-        request_headers = {
-            "Connection": "close",
-            "User-Agent": "tinybrowser",
-        }
-    ):
+    def request(self, request_headers=None):
+        if request_headers is None:
+            request_headers = {
+                "Connection": "keep-alive",
+                "User-Agent": "filament",
+            }
         if self.scheme == "data":
             content = self.data
         elif self.scheme == "file":
             with open(self.path, "r") as f:
                 content = f.read()
         elif self.scheme in ["http", "https"]:
-            s = socket.socket(
-                    family=socket.AF_INET,
-                    type=socket.SOCK_STREAM,
-                    proto=socket.IPPROTO_TCP,
-            )
-            s.connect((self.host, self.port))
-            if self.scheme == "https":
-                ctx = ssl.create_default_context()
-                s = ctx.wrap_socket(s, server_hostname=self.host)
+            if (self.host, self.port) not in self.sockets:
+                s = socket.socket(
+                        family=socket.AF_INET,
+                        type=socket.SOCK_STREAM,
+                        proto=socket.IPPROTO_TCP,
+                )
+                s.connect((self.host, self.port))
+                if self.scheme == "https":
+                    ctx = ssl.create_default_context()
+                    s = ctx.wrap_socket(s, server_hostname=self.host)
+                self.sockets[(self.host, self.port)] = s
+            else:
+                s = self.sockets[(self.host, self.port)]
 
             request = f"GET {self.path} HTTP/1.1\r\n"
             request += f"Host: {self.host}\r\n"
@@ -68,26 +73,34 @@ class URL:
             request += "\r\n"
             s.send(request.encode("utf8"))
 
-            response = s.makefile("r", encoding="utf8", newline="\r\n")
-            statusline = response.readline()
+            encoding = "utf8"
+            response = s.makefile("rb", newline="\r\n")
+            statusline = response.readline().decode(encoding)
             version, status, explanation = statusline.split(" ", 2)
             response_headers = {}
             while True:
-                line = response.readline()
+                line = response.readline().decode(encoding)
                 if line == "\r\n":
                     break
                 header, value = line.split(":", 1)
                 response_headers[header.casefold()] = value.strip()
             assert "transfer-encoding" not in response_headers
             assert "content-encoding" not in response_headers
-            content = response.read()
-            s.close()
+            content = response.read(
+                    int(response_headers["content-length"])
+            ).decode(encoding)
 
         if self.view_source:
             content = content.replace("<", "&lt;")
             content = content.replace(">", "&gt;")
         
         return content
+
+    @classmethod
+    def close_sockets(cls):
+        for s in cls.sockets.values():
+            s.close()
+        cls.sockets = {}
 
 entities = {
     "lt": "<",
@@ -107,8 +120,8 @@ def show(body):
         elif c == "&":
             in_entity = True
             entity = ""
-        elif c == ";":
-            print(entities[entity], end="")
+        elif in_entity and c == ";":
+            print(entities.get(entity, f"&{entity};"), end="")
             in_entity = False
         elif not in_tag and not in_entity:
             print(c, end="")
@@ -121,7 +134,11 @@ def load(url):
 
 if __name__ == "__main__":
     import sys
-    if len(sys.argv) == 2:
-        load(URL(sys.argv[1]))
-    else:
-        load(URL("file:///Users/ryan/code/filament/test.html"))
+
+    try:
+        if len(sys.argv) == 2:
+            load(URL(sys.argv[1]))
+        else:
+            load(URL("file:///Users/ryan/code/filament/test.html"))
+    finally:
+        URL.close_sockets()
