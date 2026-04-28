@@ -4,7 +4,12 @@ import ssl
 class URL:
     def __init__(self, url):
         self.scheme, url = url.split(":", 1)
-        assert self.scheme in ["http", "https", "file", "data"], "URL scheme unsupported"
+        assert self.scheme in ["http", "https", "file", "data", "view-source"], "URL scheme unsupported"
+        if self.scheme == "view-source":
+            self.view_source = True
+            self.scheme, url = url.split(":", 1)
+        else:
+            self.view_source = False
 
         if self.scheme == "http":
             self.port = 80
@@ -41,44 +46,46 @@ class URL:
         }
     ):
         if self.scheme == "data":
-            return self.data
-
-        if self.scheme == "file":
+            content = self.data
+        elif self.scheme == "file":
             with open(self.path, "r") as f:
                 content = f.read()
-            return content
+        elif self.scheme in ["http", "https"]:
+            s = socket.socket(
+                    family=socket.AF_INET,
+                    type=socket.SOCK_STREAM,
+                    proto=socket.IPPROTO_TCP,
+            )
+            s.connect((self.host, self.port))
+            if self.scheme == "https":
+                ctx = ssl.create_default_context()
+                s = ctx.wrap_socket(s, server_hostname=self.host)
 
-        s = socket.socket(
-                family=socket.AF_INET,
-                type=socket.SOCK_STREAM,
-                proto=socket.IPPROTO_TCP,
-        )
-        s.connect((self.host, self.port))
-        if self.scheme == "https":
-            ctx = ssl.create_default_context()
-            s = ctx.wrap_socket(s, server_hostname=self.host)
+            request = f"GET {self.path} HTTP/1.1\r\n"
+            request += f"Host: {self.host}\r\n"
+            for header, value in request_headers.items():
+                request += f"{header}: {value}\r\n"
+            request += "\r\n"
+            s.send(request.encode("utf8"))
 
-        request = f"GET {self.path} HTTP/1.1\r\n"
-        request += f"Host: {self.host}\r\n"
-        for header, value in request_headers.items():
-            request += f"{header}: {value}\r\n"
-        request += "\r\n"
-        s.send(request.encode("utf8"))
+            response = s.makefile("r", encoding="utf8", newline="\r\n")
+            statusline = response.readline()
+            version, status, explanation = statusline.split(" ", 2)
+            response_headers = {}
+            while True:
+                line = response.readline()
+                if line == "\r\n":
+                    break
+                header, value = line.split(":", 1)
+                response_headers[header.casefold()] = value.strip()
+            assert "transfer-encoding" not in response_headers
+            assert "content-encoding" not in response_headers
+            content = response.read()
+            s.close()
 
-        response = s.makefile("r", encoding="utf8", newline="\r\n")
-        statusline = response.readline()
-        version, status, explanation = statusline.split(" ", 2)
-        response_headers = {}
-        while True:
-            line = response.readline()
-            if line == "\r\n":
-                break
-            header, value = line.split(":", 1)
-            response_headers[header.casefold()] = value.strip()
-        assert "transfer-encoding" not in response_headers
-        assert "content-encoding" not in response_headers
-        content = response.read()
-        s.close()
+        if self.view_source:
+            content = content.replace("<", "&lt;")
+            content = content.replace(">", "&gt;")
         
         return content
 
