@@ -4,7 +4,9 @@ import ssl
 class URL:
     sockets = {}
 
-    def __init__(self, url):
+    def __init__(self, url, redirect_count=0):
+        self.redirect_count = redirect_count
+
         if url.startswith("view-source:"):
             self.view_source = True
             url = url.removeprefix("view-source:")
@@ -46,54 +48,67 @@ class URL:
                 "Connection": "keep-alive",
                 "User-Agent": "filament",
             }
-        if self.scheme == "data":
-            content = self.data
-        elif self.scheme == "file":
-            with open(self.path, "r") as f:
-                content = f.read()
-        elif self.scheme in ["http", "https"]:
-            if (self.host, self.port) not in self.sockets:
-                s = socket.socket(
-                        family=socket.AF_INET,
-                        type=socket.SOCK_STREAM,
-                        proto=socket.IPPROTO_TCP,
-                )
-                s.connect((self.host, self.port))
-                if self.scheme == "https":
-                    ctx = ssl.create_default_context()
-                    s = ctx.wrap_socket(s, server_hostname=self.host)
-                self.sockets[(self.host, self.port)] = s
-            else:
-                s = self.sockets[(self.host, self.port)]
 
-            request = f"GET {self.path} HTTP/1.1\r\n"
-            request += f"Host: {self.host}\r\n"
-            for header, value in request_headers.items():
-                request += f"{header}: {value}\r\n"
-            request += "\r\n"
-            s.send(request.encode("utf8"))
+        match self.scheme:
+            case "data":
+                content = self.data
+            case "file":
+                with open(self.path, "r") as f:
+                    content = f.read()
+            case "http" | "https":
+                if (self.host, self.port) not in self.sockets:
+                    s = socket.socket(
+                            family=socket.AF_INET,
+                            type=socket.SOCK_STREAM,
+                            proto=socket.IPPROTO_TCP,
+                    )
+                    s.connect((self.host, self.port))
+                    if self.scheme == "https":
+                        ctx = ssl.create_default_context()
+                        s = ctx.wrap_socket(s, server_hostname=self.host)
+                    self.sockets[(self.host, self.port)] = s
+                else:
+                    s = self.sockets[(self.host, self.port)]
 
-            encoding = "utf8"
-            response = s.makefile("rb", newline="\r\n")
-            statusline = response.readline().decode(encoding)
-            version, status, explanation = statusline.split(" ", 2)
-            response_headers = {}
-            while True:
-                line = response.readline().decode(encoding)
-                if line == "\r\n":
-                    break
-                header, value = line.split(":", 1)
-                response_headers[header.casefold()] = value.strip()
-            assert "transfer-encoding" not in response_headers
-            assert "content-encoding" not in response_headers
-            content = response.read(
-                    int(response_headers["content-length"])
-            ).decode(encoding)
+                request = f"GET {self.path} HTTP/1.1\r\n"
+                request += f"Host: {self.host}\r\n"
+                for header, value in request_headers.items():
+                    request += f"{header}: {value}\r\n"
+                request += "\r\n"
+                s.send(request.encode("utf8"))
+
+                encoding = "utf8"
+                response = s.makefile("rb", newline="\r\n")
+                statusline = response.readline().decode(encoding)
+                version, status, explanation = statusline.split(" ", 2)
+
+                response_headers = {}
+                while True:
+                    line = response.readline().decode(encoding)
+                    if line == "\r\n":
+                        break
+                    header, value = line.split(":", 1)
+                    response_headers[header.casefold()] = value.strip()
+                assert "transfer-encoding" not in response_headers
+                assert "content-encoding" not in response_headers
+
+                # Redirect for 3xx status codes
+                # TODO: handle 304 correctly
+                if status.startswith("3") and status != "304":
+                    assert self.redirect_count < 20, "Too many consecutive redirects"
+                    location = response_headers["location"]
+                    if location.startswith("/"):
+                        location = f"{self.scheme}://{self.host}{location}"
+                    return URL(location, self.redirect_count + 1).request()
+
+                content = response.read(
+                        int(response_headers["content-length"])
+                ).decode(encoding)
 
         if self.view_source:
             content = content.replace("<", "&lt;")
             content = content.replace(">", "&gt;")
-        
+
         return content
 
     @classmethod
