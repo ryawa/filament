@@ -82,15 +82,31 @@ class URL:
         
         return content
 
+entities = {
+    "lt": "<",
+    "gt": ">",
+}
+
 def show(body):
     in_tag = False
+    in_entity = False
+    entity = ""
+
     for c in body:
         if c == "<":
             in_tag = True
         elif c == ">":
             in_tag = False
-        elif not in_tag:
+        elif c == "&":
+            in_entity = True
+            entity = ""
+        elif c == ";":
+            print(entities[entity], end="")
+            in_entity = False
+        elif not in_tag and not in_entity:
             print(c, end="")
+        elif in_entity:
+            entity += c
 
 def load(url):
     body = url.request()
@@ -101,4 +117,4 @@ if __name__ == "__main__":
     if len(sys.argv) == 2:
         load(URL(sys.argv[1]))
     else:
-        load(URL("file:///Users/ryan/code/browser/test.html"))
+        load(URL("file:///Users/ryan/code/filament/test.html"))
