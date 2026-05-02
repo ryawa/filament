@@ -4,6 +4,7 @@ from pathlib import Path
 import datetime
 import gzip
 import io
+import json
 import socket
 import ssl
 
@@ -12,7 +13,6 @@ CACHE_DIR = BASE_DIR / ".cache/"
 
 @dataclass
 class Response:
-    raw: str
     status: int
     headers: dict[str, str]
     content: str
@@ -76,11 +76,11 @@ class URL:
             case "http" | "https":
                 cached_path = CACHE_DIR / self.host / self.path.lstrip("/")
                 if cached_path.is_file():
-                    cached_response = URL._parse_http(
-                        io.BytesIO(cached_path.read_bytes())
-                    )
+                    cached = json.loads(cached_path.read_text())
+                    headers = cached["headers"]
+                    content = cached["content"]
 
-                    cache_directives = cached_response.headers["cache-control"].split(", ")
+                    cache_directives = headers["cache-control"].split(", ")
                     max_age = None
                     for directive in cache_directives:
                         if directive.startswith("max-age="):
@@ -91,8 +91,6 @@ class URL:
                     response_time = cached_path.stat().st_mtime
                     if datetime.datetime.now().timestamp() - response_time > max_age:
                         content = self._request_http(request_headers)
-                    else:
-                        content = cached_response.content
                 else:
                     content = self._request_http(request_headers)
 
@@ -147,7 +145,10 @@ class URL:
                     "max-age" in cache_control and "no-store" not in cache_control):
                 cache_path = CACHE_DIR / self.host / self.path.lstrip("/")
                 cache_path.parent.mkdir(parents=True, exist_ok=True)
-                cache_path.write_text(response.raw)
+                cache_path.write_text(json.dumps({
+                    "headers": response.headers,
+                    "content": response.content,
+                }))
             return response.content
 
 
@@ -156,14 +157,12 @@ class URL:
         encoding = "utf8"
 
         statusline = response_file.readline().decode(encoding)
-        raw = statusline
         version, status, explanation = statusline.split(" ", 2)
         status = int(status)
 
         headers = {}
         while True:
             line = response_file.readline().decode(encoding)
-            raw += line
             if line == "\r\n":
                 break
             header, value = line.split(":", 1)
@@ -186,9 +185,8 @@ class URL:
         if headers.get("content-encoding") == "gzip":
             content = gzip.decompress(content)
         content = content.decode(encoding)
-        raw += content
 
-        return Response(raw, status, headers, content)
+        return Response(status, headers, content)
 
 
     @classmethod
