@@ -3,9 +3,6 @@ from pathlib import Path
 
 import tkinter
 
-WIDTH, HEIGHT = 800, 600
-HSTEP, VSTEP = 13, 18
-
 entities = {
     "lt": "<",
     "gt": ">",
@@ -36,42 +33,74 @@ def lex(body):
 
     return text
 
-def layout(text):
-    display_list = []
-    cursor_x, cursor_y = HSTEP, VSTEP
-    for c in text:
-        display_list.append((cursor_x, cursor_y, c))
-        cursor_x += HSTEP
-        if cursor_x > WIDTH - HSTEP:
-            cursor_x = HSTEP
-            cursor_y += VSTEP
-    return display_list
-
 class Browser:
+    WIDTH, HEIGHT = 800, 600
+    HSTEP, VSTEP = 13, 18
     SCROLL_STEP = 100
+    SCROLLBAR_WIDTH = 10
 
     def __init__(self):
         self.window = tkinter.Tk()
-        self.canvas = tkinter.Canvas(self.window, width=WIDTH, height=HEIGHT)
-        self.canvas.pack()
+        self.canvas = tkinter.Canvas(
+            self.window,
+            width=self.WIDTH,
+            height=self.HEIGHT,
+            highlightthickness=0
+        )
+        self.canvas.pack(fill="both", expand=True)
+        self.window.bind("<Configure>", self.resize)
         self.scroll = 0
-        self.window.bind("j", self.scroll_down)
+        self.window.bind("j", lambda e: self.scroll_page(-self.SCROLL_STEP))
+        self.window.bind("k", lambda e: self.scroll_page(self.SCROLL_STEP))
+        self.window.bind("<MouseWheel>", lambda e: self.scroll_page(e.delta))
 
     def load(self, url):
         body = url.request()
-        text = lex(body)
-        self.display_list = layout(text)
+        self.text = lex(body)
+        self.layout(self.text)
         self.draw()
+
+    def layout(self, text):
+        self.display_list = []
+        cursor_x, cursor_y = self.HSTEP, self.VSTEP
+        for c in text:
+            if c == "\n":
+                cursor_x = self.HSTEP
+                cursor_y += self.VSTEP
+                continue
+            self.display_list.append((cursor_x, cursor_y, c))
+            cursor_x += self.HSTEP
+            if cursor_x >= self.WIDTH - self.HSTEP:
+                cursor_x = self.HSTEP
+                cursor_y += self.VSTEP
+        self.max_y = self.display_list[-1][1] + self.VSTEP
 
     def draw(self):
         self.canvas.delete("all")
+        scale = self.HEIGHT / (self.display_list[-1][1] + self.VSTEP)
+        if scale < 1:
+            self.canvas.create_rectangle(
+                self.WIDTH - self.SCROLLBAR_WIDTH,
+                self.scroll * scale,
+                self.WIDTH,
+                (self.scroll + self.HEIGHT) * scale,
+                fill="blue",
+                outline=""
+            )
         for x, y, c in self.display_list:
-            if y > self.scroll + HEIGHT: continue
-            if y + VSTEP < self.scroll: continue
+            if y > self.scroll + self.HEIGHT: continue
+            if y + self.VSTEP < self.scroll: continue
             self.canvas.create_text(x, y - self.scroll, text=c)
+    
+    def scroll_page(self, delta):
+        self.scroll -= delta
+        self.scroll = max(0, min(self.max_y - self.HEIGHT, self.scroll))
+        self.draw()
 
-    def scroll_down(self, e):
-        self.scroll += self.SCROLL_STEP
+    def resize(self, e):
+        self.WIDTH = e.width
+        self.HEIGHT = e.height
+        self.layout(self.text)
         self.draw()
 
 if __name__ == "__main__":
