@@ -2,6 +2,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 import datetime
+import gzip
 import io
 import socket
 import ssl
@@ -61,6 +62,7 @@ class URL:
     def request(self, request_headers=None):
         if request_headers is None:
             request_headers = {
+                "Accept-Encoding": "gzip",
                 "Connection": "keep-alive",
                 "User-Agent": "filament",
             }
@@ -152,6 +154,7 @@ class URL:
     @staticmethod
     def _parse_http(response_file):
         encoding = "utf8"
+
         statusline = response_file.readline().decode(encoding)
         raw = statusline
         version, status, explanation = statusline.split(" ", 2)
@@ -165,12 +168,24 @@ class URL:
                 break
             header, value = line.split(":", 1)
             headers[header.casefold()] = value.strip()
-        assert "transfer-encoding" not in headers
-        assert "content-encoding" not in headers
 
-        content = response_file.read(
-            int(headers["content-length"])
-        ).decode(encoding)
+        if headers.get("transfer-encoding") == "chunked":
+            content = b""
+            while True:
+                line = response_file.readline().decode(encoding)
+                size = int(line.rstrip("\r\n"), 16)
+                content += response_file.read(size)
+                newline = response_file.readline().decode(encoding)
+                assert newline == "\r\n"
+                if size == 0:
+                    break
+        else:
+            content = response_file.read(
+                int(headers["content-length"])
+            )
+        if headers.get("content-encoding") == "gzip":
+            content = gzip.decompress(content)
+        content = content.decode(encoding)
         raw += content
 
         return Response(raw, status, headers, content)
