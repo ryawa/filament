@@ -110,15 +110,22 @@ class Browser:
         self.draw()
 
 if __name__ == "__main__":
+    import argparse
     import sys
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "url",
+        type=str,
+        help="the URL to display",
+        nargs="?",
+        default=f"file:///{Path.cwd() / 'test.html'}",
+    )
+    args = parser.parse_args()
 
     b = Browser()
     try:
-        if len(sys.argv) == 2:
-            b.load(sys.argv[1])
-        else:
-            test_page = Path.cwd() / "test.html"
-            b.load(f"file:///{test_page}")
+        b.load(args.url)
         tkinter.mainloop()
     finally:
         URL.close_sockets()
