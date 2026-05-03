@@ -1,4 +1,4 @@
-from network import URL
+from url import URL
 from pathlib import Path
 
 import tkinter
@@ -55,6 +55,10 @@ class Browser:
         self.window.bind("<MouseWheel>", lambda e: self.scroll_page(e.delta))
 
     def load(self, url):
+        try:
+            url = URL(url)
+        except Exception as e:
+            url = URL("about:blank")
         body = url.request()
         self.text = lex(body)
         self.layout(self.text)
@@ -73,11 +77,13 @@ class Browser:
             if cursor_x >= self.WIDTH - self.HSTEP:
                 cursor_x = self.HSTEP
                 cursor_y += self.VSTEP
-        self.max_y = self.display_list[-1][1] + self.VSTEP
+        self.max_y = self.VSTEP
+        if self.display_list:
+            self.max_y += self.display_list[-1][1]
 
     def draw(self):
         self.canvas.delete("all")
-        scale = self.HEIGHT / (self.display_list[-1][1] + self.VSTEP)
+        scale = self.HEIGHT / self.max_y
         if scale < 1:
             self.canvas.create_rectangle(
                 self.WIDTH - self.SCROLLBAR_WIDTH,
@@ -109,10 +115,10 @@ if __name__ == "__main__":
     b = Browser()
     try:
         if len(sys.argv) == 2:
-            b.load(URL(sys.argv[1]))
+            b.load(sys.argv[1])
         else:
             test_page = Path.cwd() / "test.html"
-            b.load(URL(f"file:///{test_page}"))
+            b.load(f"file:///{test_page}")
         tkinter.mainloop()
     finally:
         URL.close_sockets()

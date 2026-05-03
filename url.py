@@ -30,7 +30,8 @@ class URL:
         else:
             self.view_source = False
         self.scheme, url = url.split(":", 1)
-        assert self.scheme in ["http", "https", "file", "data"], "URL scheme unsupported"
+        if self.scheme not in ["http", "https", "file", "data", "about"]:
+            raise ValueError("URL scheme unsupported")
 
         if self.scheme == "http":
             self.port = 80
@@ -44,8 +45,12 @@ class URL:
             self.mediatype = url.removesuffix(";base64")
             assert self.mediatype == "text/html"
             return
+        elif self.scheme == "about":
+            self.about_token = url
+            return
 
-        assert url.startswith("//"), "Expected host/authority in URL"
+        if not url.startswith("//"):
+            raise ValueError("Expected host/authority in URL")
         url = url.removeprefix("//")
 
         if "/" not in url:
@@ -68,6 +73,9 @@ class URL:
             }
 
         match self.scheme:
+            case "about":
+                assert self.about_token == "blank"
+                return ""
             case "data":
                 content = self.data
             case "file":
