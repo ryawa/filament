@@ -1,7 +1,16 @@
+from dataclasses import dataclass
 from url import URL
 from pathlib import Path
 
 import tkinter
+import tkinter.font
+
+@dataclass
+class Text:
+    text: str
+
+class Tag:
+    tag: str
 
 entities = {
     "lt": "<",
@@ -9,29 +18,37 @@ entities = {
 }
 
 def lex(body):
-    text = ""
+    out = []
 
+    buffer = ""
+    entity = ""
     in_tag = False
     in_entity = False
-    entity = ""
 
     for c in body:
         if c == "<":
             in_tag = True
+            if buffer: out.append(Text(buffer))
+            buffer = ""
         elif c == ">":
             in_tag = False
-        elif c == "&":
+            if buffer: out.append(Tag(buffer))
+            buffer = ""
+        elif c == "&" and not in_tag:
             in_entity = True
             entity = ""
-        elif in_entity and c == ";":
-            text += entities.get(entity, f"&{entity};")
+        elif c == ";" and in_entity:
             in_entity = False
+            buffer += entities.get(entity, f"&{entity};")
         elif not in_tag and not in_entity:
-            text += c
+            buffer += c
         elif in_entity:
             entity += c
 
-    return text
+    if not in_tag and buffer:
+        out.append(Text(buffer))
+
+    return out
 
 class Browser:
     WIDTH, HEIGHT = 800, 600
@@ -60,23 +77,40 @@ class Browser:
         except Exception as e:
             url = URL("about:blank")
         body = url.request()
-        self.text = lex(body)
-        self.layout(self.text)
+        self.tokens = lex(body)
+        self.layout()
         self.draw()
 
-    def layout(self, text):
+    def layout(self):
         self.display_list = []
         cursor_x, cursor_y = self.HSTEP, self.VSTEP
-        for c in text:
-            if c == "\n":
-                cursor_x = self.HSTEP
-                cursor_y += self.VSTEP
-                continue
-            self.display_list.append((cursor_x, cursor_y, c))
-            cursor_x += self.HSTEP
-            if cursor_x >= self.WIDTH - self.HSTEP:
-                cursor_x = self.HSTEP
-                cursor_y += self.VSTEP
+
+        weight = "normal"
+        style = "roman"
+        for tok in self.tokens:
+            if isinstance(tok, Text):
+                for word in tok.text.split():
+                    font = tkinter.font.Font(
+                        size=16,
+                        weight=weight,
+                        slant=style
+                    )
+                    w = font.measure(word)
+                    if cursor_x + w > self.WIDTH - self.HSTEP:
+                        cursor_y += font.metrics("linespace") * 1.25
+                        cursor_x = self.HSTEP
+
+                    self.display_list.append((cursor_x, cursor_y, word, font))
+                    cursor_x += w + font.measure(" ")
+            elif tok.tag == "i":
+                style = "italic"
+            elif tok.tag == "/i":
+                style = "roman"
+            elif tok.tag == "b":
+                weight = "bold"
+            elif tok.tag == "/b":
+                weight = "normal"
+
         self.max_y = self.VSTEP
         if self.display_list:
             self.max_y += self.display_list[-1][1]
@@ -93,10 +127,16 @@ class Browser:
                 fill="blue",
                 outline=""
             )
-        for x, y, c in self.display_list:
+        for x, y, w, f in self.display_list:
             if y > self.scroll + self.HEIGHT: continue
             if y + self.VSTEP < self.scroll: continue
-            self.canvas.create_text(x, y - self.scroll, text=c)
+            self.canvas.create_text(
+                x,
+                y - self.scroll,
+                text=w,
+                anchor="nw",
+                font=f,
+            )
     
     def scroll_page(self, delta):
         self.scroll -= delta
@@ -106,7 +146,7 @@ class Browser:
     def resize(self, e):
         self.WIDTH = e.width
         self.HEIGHT = e.height
-        self.layout(self.text)
+        self.layout()
         self.draw()
 
 if __name__ == "__main__":
